@@ -1,0 +1,13 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata: 
+  name: wine-predictor
+  namespace: wine-ml
+spec: 
+  predictor:
+    serviceAccountName: sa-wine-s3-access
+    model:
+      modelFormat:
+        name: sklearn
+      runtime: kserve-sklearnserver
+      storageUri: s3://wine-quality-mlops-ajith-2026/wine-quality/versions/v1/

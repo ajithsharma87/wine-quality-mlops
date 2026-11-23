@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-wine-s3-access
+  namespace: wine-ml
+  annotations:
+    serving.kserve.io/s3-endpoint: s3.ap-south-1.amazonaws.com
+    serving.kserve.io/s3-usehttps: "1"
+    serving.kserve.io/s3-region: ap-south-1
+secrets:
+  - name: wine-s3-secret

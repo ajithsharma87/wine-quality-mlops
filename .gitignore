@@ -161,3 +161,10 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 atifacts/*
+
+# MLOps generated artifacts
+artifacts/
+*.joblib
+.env.*
+!.env.example
+k8s/*secret*.yaml

@@ -10,4 +10,4 @@ spec:
       modelFormat:
         name: sklearn
       runtime: kserve-sklearnserver
-      storageUri: s3://wine-quality-mlops-ajith-2026/wine-quality/versions/v1/
+      storageUri: s3://wine-quality-mlops-ajith-2026/wine-quality/versions/7ab1ecce906e967f90787f6fec4d743e0a8211c3/

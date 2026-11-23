@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "k8s/**"
   pull_request:
     branches:
       - main
@@ -12,6 +14,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: wine-quality-mlops-main
+  cancel-in-progress: false
 
 jobs:
   ci:
@@ -36,27 +42,35 @@ jobs:
           python -m pip install flake8 pytest build
 
       - name: Check Python syntax
-        run: python -m compileall -q src
+        run: |
+          python -m compileall -q src
 
       - name: Lint code
         run: |
           flake8 src --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run unit tests
-        run: python -m pytest tests/ -v
+        run: |
+          python -m pytest tests/ -v
 
       - name: Build Python package
-        run: python -m build
+        run: |
+          python -m build
 
   train-and-upload:
-    name: Train Model and Upload to S3
+    name: Train Model, Upload to S3 and Deploy
     needs: ci
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -71,8 +85,6 @@ jobs:
           python -m pip install -e . --no-deps
 
       - name: Train Wine Quality model
-        env:
-          MLFLOW_TRACKING_URI: file:./mlruns
         run: |
           python main.py
 
@@ -89,7 +101,8 @@ jobs:
           aws-region: ap-south-1
 
       - name: Verify AWS authentication
-        run: aws sts get-caller-identity
+        run: |
+          aws sts get-caller-identity
 
       - name: Upload trained model to S3
         env:
@@ -107,9 +120,57 @@ jobs:
             --bucket "$S3_BUCKET" \
             --key "wine-quality/versions/${GITHUB_SHA}/model.joblib"
 
-      - name: Print deployed model location
+      - name: Print uploaded model location
         env:
           S3_BUCKET: wine-quality-mlops-ajith-2026
         run: |
           echo "Model uploaded successfully"
           echo "s3://${S3_BUCKET}/wine-quality/versions/${GITHUB_SHA}/model.joblib"
+
+      - name: Update KServe inference manifest
+        env:
+          S3_BUCKET: wine-quality-mlops-ajith-2026
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          manifest = Path("k8s/inference.yaml")
+          content = manifest.read_text(encoding="utf-8")
+
+          model_uri = (
+              f"s3://{os.environ['S3_BUCKET']}/"
+              f"wine-quality/versions/{os.environ['GITHUB_SHA']}/"
+          )
+
+          updated, count = re.subn(
+              r"(?m)^(\s*storageUri:\s*)s3://\S+",
+              lambda match: match.group(1) + model_uri,
+              content
+          )
+
+          if count != 1:
+              raise RuntimeError(
+                  f"Expected exactly one storageUri, found {count}"
+              )
+
+          manifest.write_text(updated, encoding="utf-8")
+          print(f"Updated storageUri: {model_uri}")
+          PY
+
+      - name: Commit and push KServe manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add k8s/inference.yaml
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes detected"
+            exit 0
+          fi
+
+          git commit -m "Deploy model ${GITHUB_SHA} [skip ci]"
+          git push origin HEAD:main

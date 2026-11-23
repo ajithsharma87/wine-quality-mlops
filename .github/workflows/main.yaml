@@ -1,4 +1,5 @@
-name: Wine Quality MLOps CI
+
+name: Wine Quality MLOps CI/CD
 
 on:
   push:
@@ -35,17 +36,80 @@ jobs:
           python -m pip install flake8 pytest build
 
       - name: Check Python syntax
-        run: |
-          python -m compileall -q src
+        run: python -m compileall -q src
 
       - name: Lint code
         run: |
           flake8 src --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run unit tests
-        run: |
-          python -m pytest tests/ -v
+        run: python -m pytest tests/ -v
 
       - name: Build Python package
+        run: python -m build
+
+  train-and-upload:
+    name: Train Model and Upload to S3
+    needs: ci
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
         run: |
-          python -m build
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
+
+      - name: Train Wine Quality model
+        env:
+          MLFLOW_TRACKING_URI: file:./mlruns
+        run: |
+          python main.py
+
+      - name: Verify trained model
+        run: |
+          test -s artifacts/model_trainer/model.joblib
+          test -s artifacts/model_evaluation/metrics.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Verify AWS authentication
+        run: aws sts get-caller-identity
+
+      - name: Upload trained model to S3
+        env:
+          S3_BUCKET: wine-quality-mlops-ajith-2026
+        run: |
+          aws s3 cp \
+            artifacts/model_trainer/model.joblib \
+            "s3://${S3_BUCKET}/wine-quality/versions/${GITHUB_SHA}/model.joblib"
+
+      - name: Verify S3 upload
+        env:
+          S3_BUCKET: wine-quality-mlops-ajith-2026
+        run: |
+          aws s3api head-object \
+            --bucket "$S3_BUCKET" \
+            --key "wine-quality/versions/${GITHUB_SHA}/model.joblib"
+
+      - name: Print deployed model location
+        env:
+          S3_BUCKET: wine-quality-mlops-ajith-2026
+        run: |
+          echo "Model uploaded successfully"
+          echo "s3://${S3_BUCKET}/wine-quality/versions/${GITHUB_SHA}/model.joblib"
